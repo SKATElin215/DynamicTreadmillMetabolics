@@ -1,0 +1,321 @@
+---
+title: "MetabolicsBiomechanics_2026-05-19"
+author: "Caitlin Banks"
+date: "2024-05-14"
+output: 
+  html_document:
+  toc: true
+  toc_float: true
+  theme: flatly
+  highlight: tango
+  df_print: paged
+  code_folding: show
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Setup
+## Load Packages
+
+```{r, echo=FALSE}
+library(tidyverse)
+library(readxl)
+library(ggplot2)
+library(dplyr)
+library(svglite)
+library(rstatix)
+```
+
+## Load Data
+```{r}
+netpower <- read.csv("[filename]/SummaryData_NetPower_2025-03-20.csv",header=TRUE)
+
+biomechanics <- read.csv("[filename]/DynamicTread_KineticsKinematics_CBcontrols_2025-04-17.csv",header=TRUE)
+
+asymmetry <- read.csv("[filename]/DynamicTread_Asymmetries_CBcontrols_2025-04-17.csv",header=TRUE)
+
+biomechanics$Time <- factor(biomechanics$Time, levels=c('first30','last30'))
+
+cross_correlation <- read_excel("[filename]/DynamicTread_CBControls_CrossCorrelation_Averages_2026-03-03.xlsx",sheet='Last30_AvgCrossCorrelation')
+
+delta_netpower <- read.csv("[filename]/ChangeData_NetPower_2026-05-15.csv",header=TRUE)
+```
+
+## Filter Down to Dynamic Conditions
+No open loop
+No baselines
+Last 30 strides - first 30 is not a good comparison to net power because net power is measured from last 2 minutes of trial
+Removing GR0332 and GR0333 for incomplete data/exclusion
+```{r}
+biomech_data <- biomechanics %>% filter(Time == 'last30' & Condition != 'Open Loop - Pre' & Condition != 'Open Loop - Post')
+
+biomech_data$Condition <- factor(biomech_data$Condition, levels=c('Fast','Slow','Accelerate','Decelerate','Baseline075','Baseline1125','Baseline150'))
+
+biomech_data_R <- biomech_data %>% filter(Leg == 'Right')
+biomech_data_L <- biomech_data %>% filter(Leg == 'Left')
+
+power_data <- netpower %>% filter(Event!='Open Loop - Pre' & Event != 'Open Loop - Post' & Event != 'Baseline 0.75 m/s' & Event != 'Baseline 1.125 m/s' & Event != 'Baseline 1.5 m/s' & Event != 'Post 1.5 m/s')
+power_data <- power_data %>% filter(Subject != "GR0332" & Subject != "GR0333")
+
+power_data$Event <- factor(power_data$Event, levels=c('Fast','Slow','Accelerate','Decelerate'))
+
+asymmetry_data <- asymmetry %>% filter(Trial != 'Baseline075' & Trial != 'Baseline1125' & Trial != 'Baseline150')
+asymmetry_data <- asymmetry %>% filter(Subjects != "GR0332" & Subjects != "GR0333")
+
+asymmetry_data$Condition <- factor(asymmetry_data$Trial, levels=c('Fast','Slow','Accelerate','Decelerate'))
+
+delta_netpower <- delta_netpower %>% filter(Event != 'Baseline 1.125 m/s')
+delta_netpower <- delta_netpower %>% filter(Subject != 'GR0332' & Subject != 'GR0333')
+```
+
+```{r Join Tables}
+all <- left_join(power_data,biomech_data,by=c('Subject'='Subjects','Event'='Condition'))
+#all$Dynamic.Trial = NULL
+
+all_asym <- left_join(power_data,asymmetry_data,by=c('Subject'='Subjects','Event'='Condition'))
+
+delta_asym <- left_join(delta_netpower,asymmetry_data,by=c('Subject'='Subjects','Event'='Condition'))
+```
+
+```{r Kinematic Plots - Data Values Colored by Leg}
+ggplot(all, aes(x=`Net.Power`,y=StepLength_Norm,color=Leg))+geom_point()+facet_wrap(~Event)+labs(title="Normalized Step Length")
+#ggsave("S:/Banks/DynamicTread/Metabolic Data/Figures/SL_Norm_Correlations_.png",dpi=300)
+
+ggplot(all, aes(x=`Net.Power`,y=StepTime,color=Leg))+geom_point()+facet_wrap(~Event)+labs(title="Step Time (s)")
+
+ggplot(all, aes(x=`Net.Power`,y=LeadingLimbAngle,color=Leg))+geom_point()+facet_wrap(~Event)+labs(title="Leading Limb Angle (deg)")
+
+ggplot(all, aes(x=`Net.Power`,y=TrailingLimbAngle,color=Leg))+geom_point()+facet_wrap(~Event)+labs(title="Trailing Limb Angle (deg)")
+```
+```{r Kinetic Plots}
+ggplot(all, aes(x=`Net.Power`,y=PeakPropulsion,color=Leg))+geom_point()+facet_wrap(~Event)+labs(title="Peak Propulsion")
+#ggsave("[filepath]/SL_Norm_Correlations_.png",dpi=300)
+
+ggplot(all, aes(x=`Net.Power`,y=PeakBraking,color=Leg))+geom_point()+facet_wrap(~Event)+labs(title="Peak Braking")
+
+ggplot(all, aes(x=`Net.Power`,y=PropulsionImpulse,color=Leg))+geom_point()+facet_wrap(~Event)+labs(title="Propulsion Impulse")
+
+ggplot(all, aes(x=`Net.Power`,y=BrakingImpulse,color=Leg))+geom_point()+facet_wrap(~Event)+labs(title="Braking Impulse")
+```
+
+
+## Building a Regression Model
+```{r}
+lm_PeakPropulsion <- lm(`Net.Power` ~ PeakPropulsion + Leg + Event, data=all)
+summary(lm_PeakPropulsion)
+```
+
+## Asymmetries
+```{r Visualizing Correlations}
+all_asym$Event <- factor(all_asym$Event, levels=c("Fast", "Slow", "Accelerate","Decelerate"))
+
+ggplot(all_asym, aes(y=`Net.Power`,x=StepLengthAsymmetry))+
+  geom_point(size=3)+
+  facet_wrap(~Event)+
+  labs(x="Step Length Asymmetry",y="Net Power (W/kg)")+
+  geom_vline(xintercept=0,linetype="dashed")+
+  theme_classic() +
+  theme(text=element_text(size=16))
+
+ggplot(all_asym, aes(y=`Net.Power`,x=StepTimeAsymmetry))+
+  geom_point(size=3)+
+  facet_wrap(~Event)+
+  labs(x="Step Time Asymmetry",y="Net Power (W/kg)")+
+  geom_vline(xintercept=0,linetype="dashed")+
+  theme_classic() +
+  theme(text=element_text(size=16))
+
+ggplot(all_asym, aes(y=`Net.Power`,x=LeadingLimbAngleAsymmetry))+
+  geom_point(size=3)+
+  facet_wrap(~Event)+
+  labs(x="Leading Limb Angle Asymmetry",y="Net Power (W/kg)")+
+  geom_vline(xintercept=0,linetype="dashed")+
+  theme_classic() +
+  theme(text=element_text(size=16))
+
+ggplot(all_asym, aes(y=`Net.Power`,x=TrailingLimbAngleAsymmetry))+
+  geom_point(size=3)+
+  facet_wrap(~Event)+
+  labs(x="Trailing Limb Angle Asymmetry",y="Net Power (W/kg)")+
+  geom_vline(xintercept=0,linetype="dashed")+
+  theme_classic() +
+  theme(text=element_text(size=16))
+
+ggplot(all_asym, aes(y=`Net.Power`,x=PeakPropulsionAsymmetry))+
+  geom_point(size=3)+
+  facet_wrap(~Event)+
+  labs(x="Peak Propulsion Asymmetry",y="Net Power (W/kg)")+
+  geom_vline(xintercept=0,linetype="dashed")+
+  theme_classic() +
+  theme(text=element_text(size=16))
+
+ggplot(all_asym, aes(y=`Net.Power`,x=PeakBrakingAsymmetry))+
+  geom_point(size=3)+
+  facet_wrap(~Event)+
+  labs(x="Peak Braking Asymmetry",y="Net Power (W/kg)")+
+  geom_vline(xintercept=0,linetype="dashed")+
+  theme_classic() +
+  theme(text=element_text(size=16))
+
+ggplot(all_asym, aes(y=`Net.Power`,x=PropulsionImpulseAsymmetry))+
+  geom_point(size=3)+
+  facet_wrap(~Event)+
+  labs(x="Propulsion Impulse Asymmetry",y="Net Power (W/kg)")+
+  geom_vline(xintercept=0,linetype="dashed")+
+  theme_classic() +
+  theme(text=element_text(size=16))
+
+ggplot(all_asym, aes(y=`Net.Power`,x=BrakingImpulseAsymmetry))+
+  geom_point(size=3)+
+  facet_wrap(~Event)+
+  labs(x="Braking Impulse Asymmetry",y="Net Power (W/kg)")+
+  geom_vline(xintercept=0,linetype="dashed")+
+  theme_classic() +
+  theme(text=element_text(size=16))
+```
+# Modeling Asymmetries vs. Net Power
+
+## Step Length Asymmetry
+```{r SL Asym vs Net Power}
+lm_SLasym <- lm(`Net.Power` ~ StepLengthAsymmetry + Event, data=all_asym)
+summary(lm_SLasym)
+
+ggplot(all_asym, aes(y=`Net.Power`,x=StepLengthAsymmetry,color=Event))+
+  geom_point(size=3)+
+  scale_color_manual(values=c("#ff00ff","#40a6ff","#ff8000","#ffbf00"))+
+  labs(x="Step Length Asymmetry",y="Net Power (W/kg)")+
+  geom_vline(xintercept=0,linetype="dashed")+
+  theme_classic() +
+  theme(text=element_text(size=16))
+
+#ggsave("[filepath]/NetPowervsSLA_2025-05-14.svg",width=7,height=4,units="in",dpi=600)
+
+fast_asym <- all_asym %>% filter(Event=="Fast")
+lm_SLasym_fast <- lm(`Net.Power` ~ StepLengthAsymmetry,data=fast_asym)
+summary(lm_SLasym_fast)
+
+cor.test(fast_asym$`Net.Power`,fast_asym$StepLengthAsymmetry)
+```
+### Step Time Asymmetry
+```{r ST Asym vs Net Power}
+lm_STasym <- lm(`Net.Power` ~ StepTimeAsymmetry + Event, data=all_asym)
+summary(lm_STasym)
+```
+## Leading Limb Angle Asymmetry
+```{r LLA Asym vs Net Power}
+lm_LLAasym <- lm(`Net.Power` ~ LeadingLimbAngleAsymmetry + Event, data=all_asym)
+summary(lm_LLAasym)
+```
+## Trailing Limb Angle Asymmetry
+```{r TLA Asym vs Net Power}
+lm_TLAasym <- lm(`Net.Power` ~ TrailingLimbAngleAsymmetry + Event, data=all_asym)
+summary(lm_TLAasym)
+
+ggplot(all_asym, aes(y=`Net.Power`,x=TrailingLimbAngleAsymmetry,color=Event))+
+  geom_point(size=3)+
+  scale_color_manual(values=c("#ff00ff","#40a6ff","#ff8000","#ffbf00"))+
+  labs(x="Trailing Limb Angle Asymmetry",y="Net Power (W/kg)")+
+  geom_vline(xintercept=0,linetype="dashed")+
+  theme_classic() +
+  theme(text=element_text(size=16))
+
+#ggsave("[filepath]/NetPowervsTLAA_2025-05-14.svg",width=7,height=4,units="in",dpi=600)
+```
+
+## Peak Propulsion Asymmetry
+```{r PP Asym vs Net Power}
+lm_PPasym <- lm(`Net.Power` ~ PeakPropulsionAsymmetry + Event, data=all_asym)
+summary(lm_PPasym)
+
+ggplot(all_asym, aes(y=`Net.Power`,x=PeakPropulsionAsymmetry,color=Event))+
+  geom_point(size=3)+
+  scale_color_manual(values=c("#ff00ff","#40a6ff","#ff8000","#ffbf00"))+
+  labs(x="Peak Propulsion Asymmetry",y="Net Power (W/kg)")+
+  geom_vline(xintercept=0,linetype="dashed")+
+  theme_classic() +
+  theme(text=element_text(size=16))
+
+#ggsave("S:/Banks/DynamicTread/Metabolic Data/SummaryData_Control/Figures/NetPowervsPPA_2025-05-14.svg",width=7,height=4,units="in",dpi=600)
+```
+## Peak Braking Asymmetry
+```{r PB Asym vs Net Power}
+lm_PBasym <- lm(`Net.Power` ~ PeakBrakingAsymmetry + Event, data=all_asym)
+summary(lm_PBasym)
+```
+## Propulsion Impulse Asymmetry
+```{r PI Asym vs Net Power}
+lm_PIasym <- lm(`Net.Power` ~ PropulsionImpulseAsymmetry + Event, data=all_asym)
+summary(lm_PIasym)
+```
+## Braking Impulse Asymmetry
+```{r BI Asym vs Net Power}
+lm_BIasym <- lm(`Net.Power` ~ BrakingImpulseAsymmetry + Event, data=all_asym)
+summary(lm_BIasym)
+```
+# Looking at abs(asymmetry) and change in power from 1.125 condition
+```{r}
+# Calculate abs(asymmetry) values for step length, trailing limb angle, and peak propulsion asymmetries
+delta_asym$abs_StepLengthAsymmetry <- abs(delta_asym$StepLengthAsymmetry)
+delta_asym$abs_TrailingLimbAngleAsymmetry <- abs(delta_asym$TrailingLimbAngleAsymmetry)
+delta_asym$abs_PeakPropulsionAsymmetry <- abs(delta_asym$PeakPropulsionAsymmetry)
+```
+
+## Correlation Plots
+```{r Step Length Asymmetry and Delta Net Power}
+lm_SLasym_delta_abs <- lm(`Delta.NetPower.` ~ abs_StepLengthAsymmetry + Event, data=delta_asym)
+summary(lm_SLasym_delta_abs)
+
+ggplot(delta_asym, aes(y=`Delta.NetPower.`,x=abs_StepLengthAsymmetry,color=Event))+
+  geom_point(size=3)+
+  scale_color_manual(values=c("#ff00ff","#40a6ff","#ff8000","#ffbf00"))+
+  labs(x="Absolute Step Length Asymmetry",y="Change in Net Power (W/kg)")+
+  theme_classic() +
+  theme(text=element_text(size=16))
+
+#ggsave("[filepath]/DeltaNetPowervsSLA_2026-05-15.svg",width=7,height=4,units="in",dpi=600)
+
+```
+
+```{r TLA Asymmetry and Delta Net Power}
+lm_TLAasym_delta_abs <- lm(`Delta.NetPower.` ~ abs_TrailingLimbAngleAsymmetry + Event, data=delta_asym)
+summary(lm_TLAasym_delta_abs)
+
+ggplot(delta_asym, aes(y=`Delta.NetPower.`,x=abs_TrailingLimbAngleAsymmetry,color=Event))+
+  geom_point(size=3)+
+  scale_color_manual(values=c("#ff00ff","#40a6ff","#ff8000","#ffbf00"))+
+  labs(x="Absolute Trailing Limb Angle Asymmetry",y="Change in Net Power (W/kg)")+
+  theme_classic() +
+  theme(text=element_text(size=16))
+
+#ggsave("[filepath]/DeltaNetPowervsTLA_2026-05-15.svg",width=7,height=4,units="in",dpi=600)
+```
+
+```{r Propulsion Asymmetry and Delta Net Power}
+lm_PPasym_delta_abs <- lm(`Delta.NetPower.` ~ abs_PeakPropulsionAsymmetry + Event, data=delta_asym)
+summary(lm_PPasym_delta_abs)
+
+ggplot(delta_asym, aes(y=`Delta.NetPower.`,x=abs_PeakPropulsionAsymmetry,color=Event))+
+  geom_point(size=3)+
+  scale_color_manual(values=c("#ff00ff","#40a6ff","#ff8000","#ffbf00"))+
+  labs(x="Absolute Peak Propulsion Asymmetry",y="Change in Net Power (W/kg)")+
+  theme_classic() +
+  theme(text=element_text(size=16))
+
+#ggsave("[filepath]/DeltaNetPowervsPPA_2026-05-15.svg",width=7,height=4,units="in",dpi=600)
+```
+
+
+# Cross Correlation Data for Speed Profile Matching
+```{r Cross Correlations}
+cross_correlation <- cross_correlation %>% filter(Subject!='Average')
+
+cross_correlation_long <- cross_correlation %>% pivot_longer(-Subject)
+
+cross_correlation_long$value[is.nan(cross_correlation_long$value)] <- NA
+cross_correlation_long$value <- as.numeric(cross_correlation_long$value)
+
+res.aov <- anova_test(data=cross_correlation_long, dv = value, wid=Subject, within = name)
+get_anova_table(res.aov)
+```

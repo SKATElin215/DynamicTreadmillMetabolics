@@ -1,0 +1,98 @@
+---
+title: "SpeedPlots_2026-03-10"
+author: "Caitlin Banks"
+date: "2026-03-10"
+output: 
+  html_document:
+  toc: true
+  toc_float: true
+  theme: flatly
+  highlight: tango
+  df_print: paged
+  code_folding: show
+---
+
+# Setup
+## Load Packages
+
+```{r, echo=FALSE}
+library(tidyverse)
+library(readxl)
+library(ggplot2)
+library(plyr)
+library(dplyr)
+```
+
+## Load Data
+
+```{r Load Data}
+trial_speeds <- read.csv("[filepath]/CBcontrols_TrialAvgSpeeds_2026-03-10.csv")
+last30_speeds <- read.csv("[filepath]/CBcontrols_Last30AvgSpeeds_2026-03-24.csv")
+
+trial_speeds <- trial_speeds %>% filter(Var1 !='GR0332' & Var1 != 'GR0333')
+last30_speeds <- last30_speeds %>% filter(Var1 !='GR0332' & Var1 != 'GR0333')
+
+colnames(trial_speeds) <- c('Subject','Event',seq(from=0,to=100,by=1))
+colnames(last30_speeds) <- c('Subject','Event',seq(from=0,to=100,by=1))
+
+trial_speeds_long <- pivot_longer(trial_speeds,cols=3:103,names_to="GaitCycle",values_to="Speed")
+trial_speeds_long$GaitCycle <- as.numeric(trial_speeds_long$GaitCycle)
+trial_speeds_long$Speed[is.nan(trial_speeds_long$Speed)] <- NA
+last30_speeds_long <- pivot_longer(last30_speeds,cols=3:103,names_to="GaitCycle",values_to="Speed")
+last30_speeds_long$GaitCycle <- as.numeric(last30_speeds_long$GaitCycle)
+last30_speeds_long$Speed[is.nan(last30_speeds_long$Speed)] <- NA
+
+last30_speeds_long$Event <- factor(last30_speeds_long$Event,levels=c("FastHS","SlowHS","AcceleratingHS","DeceleratingHS"))
+
+estimation_rmse <- read.csv("[filepath]/rmse_max_table.csv")
+estimation_rmse <- pivot_longer(estimation_rmse,cols=1:4,names_to="Event",values_to="RMSE")
+estimation_rmse$RMSE[is.nan(estimation_rmse$RMSE)] <- NA
+```
+
+# Plot Speeds
+## Last 30 strides
+```{r Plot Speeds by Subject}
+ggplot(data=last30_speeds_long,
+       aes(x=GaitCycle,y=Speed,color=Subject)) + 
+  geom_line() +
+  facet_wrap(~Event) +
+  theme_classic()
+```
+
+
+```{r Plot Speeds Grayscale}
+ggplot(data=last30_speeds_long,
+       aes(x=GaitCycle,y=Speed,group=Subject)) + 
+  geom_line(color='grey70') +
+  facet_wrap(~Event, labeller=as_labeller(c(AcceleratingHS = "accelerate",DeceleratingHS = 'decelerate',FastHS='fast',SlowHS='slow'))) +
+  theme_classic() +
+  stat_summary(aes(y=Speed,group=Subject),fun.data="mean_se",color='grey70',fill='grey70',geom='ribbon',group=1,linewidth=1) +
+  
+  stat_summary(aes(y=Speed, group=Subject),fun=mean,color='black',geom='line',group=1,linewidth=1) +
+
+  scale_y_continuous(limits=c(0.6,1.6),breaks = seq(0.6,1.60,by=0.2))+
+  ylab("treadmill speed (m/s)") +
+  xlab("gait cycle (%)")
+
+#ggsave("[filepath]/TM Speed Plots_2026-03-24.svg",width=7,height=4,units="in",dpi=300)
+```
+
+```{r Plot just individual data and mean}
+ggplot(data=last30_speeds_long,
+       aes(x=GaitCycle,y=Speed,group=Subject)) + 
+  geom_line(color='grey70') +
+  facet_wrap(~Event, labeller=as_labeller(c(AcceleratingHS = "accelerate",DeceleratingHS = 'decelerate',FastHS='fast',SlowHS='slow'))) +
+  theme_classic() +
+  
+  stat_summary(aes(y=Speed, group=Subject),fun=mean,color='black',geom='line',group=1,linewidth=1) +
+
+  scale_y_continuous(limits=c(0.6,1.6),breaks = seq(0.6,1.60,by=0.2))+
+  ylab("treadmill speed (m/s)") +
+  xlab("gait cycle (%)")
+```
+
+#RMSE for Speed Estimation
+```{r RMSE Characteristics}
+mean(estimation_rmse$RMSE,na.rm=T)
+sd(estimation_rmse$RMSE, na.rm=T)
+```

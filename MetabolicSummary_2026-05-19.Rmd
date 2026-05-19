@@ -1,0 +1,185 @@
+---
+title: "MetabolicSummary_2025-05-19"
+author: "Caitlin Banks"
+date: "2022-09-28"
+output: 
+  html_document:
+  toc: true
+  toc_float: true
+  theme: flatly
+  highlight: tango
+  df_print: paged
+  code_folding: show
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+# Setup
+## Load Packages
+
+```{r, warning=FALSE}
+library(tidyverse)
+library(readxl)
+library(ggplot2)
+library(plyr)
+library(dplyr)
+library(svglite)
+library(rstatix)
+library(DescTools)
+library(ggiraph)
+library(RColorBrewer)
+```
+## Load Data
+
+```{r}
+netpower <- read_excel("[filepath]/SummaryData_NetPower_17May2024.xlsx",sheet='NetPower')
+
+netpower$Event <- factor(netpower$Event, levels=c('Baseline 0.75 m/s','Baseline 1.125 m/s','Baseline 1.5 m/s','Open Loop - Pre','Fast','Slow','Accelerate','Decelerate','Open Loop - Post','Post 1.5 m/s'))
+```
+Excluding GR0332 and GR0333 because of missing data
+  -GR0332 blocks 7-10 because the metabolic data are not trustworthy after removing and adjusting the mask
+  -GR0333 does not have a Post150 due to technical issues with metabolic cart computer & participant needing to leave
+
+```{r Complete Cases}
+netpower_complete <- netpower %>% filter(Subject!='GR0332' & Subject!='GR0333')
+```
+
+```{r Set Color Palettes}
+colorCount <- length(unique(netpower$Subject))
+getPalette <- colorRampPalette(brewer.pal(9,"Set1"))
+```
+
+# Plot data
+## Individual Subjects Plus Average
+
+```{r}
+netpower$`Net Power` <- as.numeric(as.vector(netpower$`Net Power`))
+
+# Colored by individual
+ggplot(data=netpower_complete, aes(x=Event, y=`Net Power`, group=Subject, color=Subject, na.rm=TRUE)) + theme_minimal() + theme(axis.text.x=element_text(angle=45)) + ylim(c(0,4.5)) + labs(x=NULL,y='Net Power (W/kg)') + stat_summary(aes(y=`Net Power`,group=Subject),fun.data=mean_se,color='grey70',fill='grey70',geom='ribbon',group=1,linewidth=1) + stat_summary(aes(y=`Net Power`, group=Subject),fun=mean,color='black',geom='line',group=1,linewidth=1)+ geom_line() + geom_point() + scale_fill_manual(values=getPalette(colorCount))
+
+
+# All individuals grey, mean +/- SD error bar
+ggplot(data=netpower_complete, aes(x=Event, y=`Net Power`, group=Subject, na.rm=TRUE)) + theme_minimal() + theme(axis.text.x=element_text(angle=45)) + ylim(c(0,4.5)) + labs(x=NULL,y='Net Power (W/kg)') + 
+  stat_summary(aes(y=`Net Power`, group=Subject), fun.data=function(x) c(y = mean(x), ymin = mean(x) - sd(x), ymax = mean(x) + sd(x)), color='black', geom='errorbar',group=1,width=0.5,size=1) + 
+  stat_summary(aes(y=`Net Power`, group=Subject),fun=mean,color='black',geom='line',group=1,size=1)+ stat_summary(aes(y=`Net Power`, group=Subject),fun=mean,color='black',geom='point',group=1,size=2) +
+  geom_line(color='grey70') + geom_point(size=1,color='grey70') 
+
+#ggsave("[filepath]SummaryData_NetPower_20Sept2024_grayscale.svg",width=7,height=4,units="in",dpi=300)
+```
+# Stats and Calculations
+## Calculate Mean and Standard Deviation
+```{r}
+# Function to calculate the mean and standard deviation for each group
+data_summary <- function(data,varname,groupnames){
+  summary_func <- function(x, col){
+    c(mean = mean(x[[col]], na.rm=TRUE),
+      sd = sd(x[[col]], na.rm=TRUE))
+  }
+  data_sum <- ddply(data, groupnames, .fun=summary_func, varname)
+  data_sum <- rename(data_sum, c("mean" = varname))
+  return(data_sum)
+}
+
+netpower_summary <- data_summary(netpower_complete,varname="Net Power",groupnames = "Event")
+
+netpower_summary$Subject <- "Average"
+```
+
+## Some Simple Stats
+```{r}
+identify_outliers(data.frame(netpower_complete$`Net Power`))
+
+shapiro.test(netpower_complete$`Net Power`)
+
+bartlett.test(`Net Power`~Event,data=netpower_complete)
+```
+There is 1 outlier point, not considered extreme (+/-3IQR).
+After reviewing the data, I believe all of them.
+
+Shapiro-Wilk passes, data are normally distributed
+
+Bartlett's test passes, we have homogeneity of variance
+
+
+```{r Repeated Measures ANOVA}
+res.aov <- anova_test(data=netpower_complete, dv = `Net Power`, wid= Subject, within = Event)
+get_anova_table(res.aov)
+```
+There's a significant effect of Event
+
+```{r Post-hoc tests - Dunnetts}
+# Remove Baseline 0.75 and 1.125 conditions, only testing 1.5 against DT's
+netpower_complete_dunnett <- netpower_complete %>% filter(Event!="Baseline 0.75 m/s" & Event!="Baseline 1.5 m/s" & Event!="Post 1.5 m/s")
+DunnettTest(netpower_complete_dunnett$`Net Power`,g=netpower_complete_dunnett$Event,control="Baseline 1.125 m/s")
+
+# Playing around - is DT different from 1.5?
+netpower_complete_dunnett_1.5 <- netpower_complete %>% filter(Event!="Baseline 0.75 m/s" & Event!="Baseline 1.125 m/s" & Event!="Post 1.5 m/s")
+DunnettTest(netpower_complete_dunnett_1.5$`Net Power`,g=netpower_complete_dunnett_1.5$Event,control="Baseline 1.5 m/s")
+
+# Playing around - is DT different from post 1.5?
+netpower_complete_dunnett_post <- netpower_complete %>% filter(Event!="Baseline 0.75 m/s" & Event!="Baseline 1.125 m/s" & Event!="Baseline 1.5 m/s")
+DunnettTest(netpower_complete_dunnett_post$`Net Power`,g=netpower_complete_dunnett_post$Event,control="Post 1.5 m/s")
+```
+
+## Baseline Speed Scaling
+```{r Baseline Speeds Only}
+baselines <- netpower_complete %>% filter(Event=="Baseline 0.75 m/s"|Event=="Baseline 1.125 m/s"|Event=="Baseline 1.5 m/s")
+
+res.aov3 <- anova_test(data=baselines, dv = `Net Power`, wid= Subject, within = Event)
+get_anova_table(res.aov3)
+```
+```{r Baseline Speeds Pairwise}
+baselines$Subject <- factor(baselines$Subject)
+
+pwc3 <- pairwise.t.test(baselines$`Net Power`,baselines$Event, p.adjust.method='bonferroni',paired=TRUE)
+pwc3$p.value
+```
+
+## Pre-Post 1.5 t-test
+```{r Normality Test on Sub-Sample}
+prepost <- netpower_complete %>% filter(Event=="Baseline 1.5 m/s"|Event=="Post 1.5 m/s")
+differences <- with(prepost,`Net Power`[Event=="Baseline 1.5 m/s"] - `Net Power`[Event=="Post 1.5 m/s"])
+shapiro.test(differences)
+```
+
+```{r Paired T-test}
+t.test(differences,mu=0)
+```
+Technically I'm doing a one-sample t-test of the differences between the groups, which should mathematically be the same thing as a paired t-test
+
+## Pre-post open loop test
+```{r Normality Test on Open Loop Sub-Sample}
+prepost_openloop <- netpower_complete %>% filter(Event=="Open Loop - Pre"|Event=="Open Loop - Post")
+differences_openloop <- with(prepost_openloop,`Net Power`[Event=="Open Loop - Pre"] - `Net Power`[Event=="Open Loop - Post"])
+shapiro.test(differences_openloop)
+t.test(differences_openloop,mu=0)
+```
+
+## Order Effects
+```{r}
+netpower_complete$Block <- factor(netpower_complete$Block)
+
+ggplot(data=netpower_complete, aes(x=Block, y=`Net Power`, group=Subject, color=Subject, na.rm=TRUE)) + theme_minimal() +  ylim(c(0,4.5)) + labs(x=NULL,y='Net Power (W/kg)') + stat_summary(aes(y=`Net Power`,group=Subject),fun.data=mean_se,color='grey70',fill='grey70',geom='ribbon',group=1,linewidth=1) + stat_summary(aes(y=`Net Power`, group=Subject),fun=mean,color='black',geom='line',group=1,linewidth=1)+ geom_line() + geom_point() + scale_color_brewer(palette="Paired")
+
+# ANOVA of all blocks
+res.aov_blockorder <- anova_test(data=netpower_complete, dv = `Net Power`, wid= Subject, within = Block)
+get_anova_table(res.aov_blockorder)
+
+netpower_complete_dunnett <- netpower_complete %>% filter(Block!="1" & Block!="3" & Block!="10")
+DunnettTest(netpower_complete_dunnett$`Net Power`,g=netpower_complete_dunnett$Block,control="2")
+
+netpower_complete_metabolic_dunnett <- netpower_complete %>% filter(Block!="1" & Block!="2" & Block!="3" & Block!="10")
+DunnettTest(netpower_complete_metabolic_dunnett$`Net Power`,g=netpower_complete_metabolic_dunnett$Block,control="5")
+
+# Block order with mean +/- SD errorbar
+ggplot(data=netpower_complete, aes(x=Block, y=`Net Power`, group=Subject, na.rm=TRUE)) + theme_minimal() + ylim(c(0,4.5)) + labs(x='Testing Block',y='Net Power (W/kg)') +  stat_summary(aes(y=`Net Power`,group=Subject), fun.data = function(x) c(y = mean(x), ymin = mean(x) - sd(x), ymax = mean(x) + sd(x)), color='black',geom='errorbar',group=1,width=0.5, size=1) + stat_summary(aes(y=`Net Power`, group=Subject),fun=mean,color='black',geom='line',group=1,linewidth=1)+ stat_summary(aes(y=`Net Power`, group=Subject),fun=mean,color='black',geom='point',group=1,linewidth=2) + geom_line(color='grey70') + geom_point(linewidth=1,color='grey70')
+
+#ggsave("[filepath]OrderEffects_NetPower_2026-05-12.svg",width=7,height=4,units="in",dpi=600)
+```
+```{r Order Effects Pairwise}
+pwc_order <- netpower_complete %>% pairwise_t_test(`Net Power`~Block, paired=TRUE, p.adjust.method = "bonf")
+pwc_order
+```
+No notable differences between dynamic tread blocks

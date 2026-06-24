@@ -26,3 +26,6 @@ All data analysis was completed in R using RStudio
   - [DynamicTread_Asymmetries_CBcontrols_2025-04-17.csv](/DynamicTread_Asymmetries_CBcontrols_2025-04-17.csv) - Calculated kinematic and kinetic asymmetries
   - [DynamicTread_CBControls_CrossCorrelation_Averages_2026-03-03.xlsx](/DynamicTread_CBControls_CrossCorrelation_Averages_2026-03-03.xlsx) - Cross correlation data
 - Completed code with embedded results: [MetabolicsBiomechanics_2026-05-19.Rmd](/MetabolicsBiomechanics_2026-05-19.Rmd)
+
+### Participant Demographics
+- Data: [ParticipantDemographics_DynamicTreadmillMetabolics.xlsx](/ParticipantDemographics_DynamicTreadmillMetabolics.xlsx)
